@@ -43,121 +43,46 @@ def frames_from_bin(filename):
     while file.tell() < filesize:
         len, = struct.unpack("<B",file.read(1));
         name, = struct.unpack("<%ds" % len,file.read(len));
-        x,y,w,h,offset_x,offset_y,rotated,real_w,real_h = struct.unpack("<6HB2H",file.read(17))
-    
-        if rotated == 1 :
-            offset_x,offset_y = offset_y,-offset_x;
-            w,h=h,w;
-            real_w,real_h =real_h,real_w; 
+        x,y,w,h,offset_x,offset_y,rotated,real_w,real_h = struct.unpack("<4H2hB2H",file.read(17))
+        print name, x,y,w,h,offset_x,offset_y,rotated,real_w,real_h;
+        rotated = bool(rotated);
         
-        frames[name] = {
-             'box': 
-                (
-                    x,
-                    y,
-                    x + w,
-                    y + h
-                ),
-            'real_sizelist': 
-                [
-                    real_w,
-                    real_h
-                ],
-             "rotated":rotated==1,
-             "result_box":
-                (
-                    toInt((real_w - w) / 2 + offset_x),
-                    toInt((real_h - h) / 2 - offset_y),
-                    toInt((real_w + w) / 2 + offset_x),
-                    toInt((real_h + h) / 2 - offset_y),
-                )
-             }
+        frames[name] ={
+            'box': (x,y,x + h if rotated else w,y + w if rotated else h),
+            'real_sizelist': (real_w,real_h),
+            "rotated":rotated,
+            "offset":((real_w - w)/2 + offset_x,(real_h - h)/2 + offset_y)
+        }
     file.close();    
     
     print frames;
     return frames.items();
         
-    
-
-def frames_from_json(filename):
-    json_data = open(data_filename)
-    data = json.load(json_data)
-    frames = {}
-    for f in data['frames']:
-        x = toInt(f["frame"]["x"])
-        y = toInt(f["frame"]["y"])
-        w = toInt(f["frame"]["h"] if f['rotated'] else f["frame"]["w"])
-        h = toInt(f["frame"]["w"] if f['rotated'] else f["frame"]["h"])
-        real_w = toInt(f["sourceSize"]["h"] if f['rotated'] else f["sourceSize"]["w"])
-        real_h = toInt(f["sourceSize"]["w"] if f['rotated'] else f["sourceSize"]["h"])
-        d = {
-            'box': (
-                x,
-                y,
-                x + w,
-                y + h
-            ),
-            'real_sizelist': [
-                real_w,
-                real_h
-            ],
-            'result_box': (
-                toInt((real_w - w) / 2),
-                toInt((real_h - h) / 2),
-                toInt((real_w + w) / 2),
-                toInt((real_h + h) / 2)
-            ),
-            'rotated': f['rotated']
-        }
-        frames[f["filename"]] = d
-    json_data.close()
-    return frames.items()
-
 def frames_from_plist(filename):
     root = ElementTree.fromstring(open(data_filename, 'r').read())
     plist_dict = tree_to_dict(root[0])
-    to_list = lambda x: x.replace('{', '').replace('}', '').split(',')
+    to_list = lambda x: map(toInt, x.replace('{', '').replace('}', '').split(','))
+    
     frames = plist_dict['frames'].items()
     for k, v in frames:
         frame = v
         if(plist_dict["metadata"]["format"] == 3):
             frame['frame'] = frame['textureRect']
-            frame['rotated'] = frame['textureRotated']
+            frame['rotated'] = bool(frame['textureRotated'])
             frame['sourceSize'] = frame['spriteSourceSize']
             frame['offset'] = frame['spriteOffset']
-
-        rectlist = to_list(frame['frame'])
-        width = toInt(rectlist[3] if frame['rotated'] else rectlist[2])
-        height = toInt(rectlist[2] if frame['rotated'] else rectlist[3])
-        frame['box'] = (
-            toInt(rectlist[0]),
-            toInt(rectlist[1]),
-            toInt(rectlist[0]) + width,
-            toInt(rectlist[1]) + height
-        )
-        real_rectlist = to_list(frame['sourceSize'])
-        real_width = toInt(real_rectlist[1] if frame['rotated'] else real_rectlist[0])
-        real_height = toInt(real_rectlist[0] if frame['rotated'] else real_rectlist[1])
-        real_sizelist = [real_width, real_height]
-        frame['real_sizelist'] = real_sizelist
-        offsetlist = to_list(frame['offset'])
-        offset_x = toInt(offsetlist[1] if frame['rotated'] else offsetlist[0])
-        offset_y = toInt(offsetlist[0] if frame['rotated'] else offsetlist[1])
-
-        if frame['rotated']:
-            frame['result_box'] = (
-                toInt((real_sizelist[0] - width) / 2 + offset_x),
-                toInt((real_sizelist[1] - height) / 2 + offset_y),
-                toInt((real_sizelist[0] + width) / 2 + offset_x),
-                toInt((real_sizelist[1] + height) / 2 + offset_y)
-            )
-        else:
-            frame['result_box'] = (
-                toInt((real_sizelist[0] - width) / 2 + offset_x),
-                toInt((real_sizelist[1] - height) / 2 - offset_y),
-                toInt((real_sizelist[0] + width) / 2 + offset_x),
-                toInt((real_sizelist[1] + height) / 2 - offset_y)
-            )
+            
+        x,y,w,h= to_list(frame['frame']);
+        offset_x,offset_y = to_list(frame['offset']);
+        real_w,real_h = to_list(frame['sourceSize']);
+        rotated = bool(frame['rotated']);
+        
+        frame = {
+            'box': (x,y,x + h if rotated else w,y + w if rotated else h),
+            'real_sizelist': (real_w,real_h),
+            "rotated":rotated,
+            "offset":((real_w - w)/2 + offset_x,(real_h - h)/2 + offset_y)
+        }
     return frames
 
 def gen_png_from_data(filename, ext):
@@ -176,15 +101,17 @@ def gen_png_from_data(filename, ext):
     for k, v in frames:
         frame = v
         box = frame['box']
-        rect_on_big = big_image.crop(box)
-        real_sizelist = frame['real_sizelist']
-        result_image = Image.new('RGBA', real_sizelist, (0, 0, 0, 0))
-        result_box = frame['result_box']
-        result_image.paste(rect_on_big, result_box, mask=0)
+        temp_image = big_image.crop(box)
         if frame['rotated']:
-            result_image = result_image.transpose(Image.ROTATE_90)
+            temp_image = temp_image.transpose(Image.ROTATE_90)
+            #             temp_image = temp_image.rotate(90,0,True);
+        
+        result_image = Image.new('RGBA', frame['real_sizelist'], (0,0,0,0))
+        result_image.paste(temp_image,frame['offset'], mask=0);
+            
         if not os.path.isdir(filename):
             os.mkdir(filename)
+        
         outfile = (filename + '/' + k).replace('gift_', '')
         print(outfile, "generated")
         result_image.save(outfile)
